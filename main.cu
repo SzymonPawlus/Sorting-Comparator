@@ -1,4 +1,4 @@
-// Made with CLion on Educational License
+// Made with CLion Educational License
 
 #include <cmath>
 #include <chrono>
