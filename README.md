@@ -1,5 +1,7 @@
 # Sorting Algorithms Comparison
 
+# NVIDIA GPU is REQUIRED to run a program
+
 ## Bubble Sort
 - ! DISABLED ABOVE 2^15 ELEMENTS !
 - Average Performance: O(n^2)
