@@ -26,7 +26,7 @@
 ## Quick Sort
 - Average Performance   : O(n * log(n))
 - Worst Case Performance: O(n ^ 2)
-- Space Complexity      : O(1)
+- Space Complexity      : O(n)
 - https://www.youtube.com/watch?v=LKiaoV86iJo
 
 # Tests:
