@@ -4,6 +4,8 @@
 #include <chrono>
 #include <iostream>
 
+// Utility function
+// For __host__ it's possible to use std::swap() working similarly
 __device__ __host__ void swap(float &x, float &y){
     float temp = y;
     y = x;
@@ -32,11 +34,12 @@ __host__ void bubble_sort(int n, float *x){
 
 // GPU Bubble Sort
 // ODD-EVEN Sort
+// Alternately compare (2n with 2n + 1) and (2n with 2n - 1)
 __global__ void bubble_sort(int n, float *x, bool parity) {
     // Get current index (only even)
     int i = 2 * blockDim.x *blockIdx.x + threadIdx.x * 2;
     if(i < n){
-        // Check if we are checking in front or behind or (i + 1)
+        // Check if we doo even-odd or odd-even sort
         if(parity){
             // Check whether we are inside of array
             if(i + 1 < n){
@@ -76,7 +79,7 @@ __host__ void merge(float *x, int l, int m, int r){
     int j = 0; // R
     int p = l; // *x
 
-    // Choose smaller value from subarrays
+    // Choose smaller value from sorted arrays
     while(i < n1 && j < n2)
         x[p++] = L[i] < R[j] ? L[i++] : R[j++];
 
@@ -87,17 +90,19 @@ __host__ void merge(float *x, int l, int m, int r){
     while(j < n2)
         x[p++] = R[j++];
 
+    // Deallocate memory
     delete[] R;
     delete[] L;
 }
 
 __host__ void merge_sort(float *x, int l, int r){
     // Check if it is more than 1 element in the array
+    // If there is one element it's obviously sorted
     if(r > l) {
         // Get middle of the array
         int m = (l + r) / 2;
 
-        // Divide recursively on half arrays
+        // Divide into two smaller arrays
         merge_sort(x, l, m);
         merge_sort(x, m + 1, r);
 
@@ -113,23 +118,23 @@ __device__ void compare_and_swap(int n, float *x, int i, int j){
         if(x[i] > x[j]) swap(x[i], x[j]);
 }
 
-__global__ void compare(int n, float *x, int size, int current_size){
+__global__ void bitonic_sequence_step(int n, float *x, int size, int current_size){
     // Get current comparison id
     int i = (blockIdx.x*blockDim.x + threadIdx.x);
-    // Check if the comparison lays in math.ceil(n / 2)
+    // Check if the comparison lays in math.ceil(n / 2) (this is number of comparisions)
     if(i < (n + 1) / 2){
         // Divide comparisons into blocks
         int block = i / current_size;
 
-        // Calculate direction of the group
-        int block_dir = i / size;
+        // Calculate direction of sorting
+        int block_dir = (i / size) % 2;
 
         // Calculate offset in the group
         int num_in_block = i % current_size;
         int pivot, comparator;
 
         // Check direction of comparison and calculate indecies
-        if(block_dir % 2 == 0) {
+        if(block_dir == 0) {
             pivot = 2 * (block * current_size) + num_in_block; // Number of element in x
             comparator = pivot + current_size;
         }else{
@@ -142,12 +147,20 @@ __global__ void compare(int n, float *x, int size, int current_size){
 
 }
 
+// Two groups next to each other with opposite sorting directions can be merged into one sorted array by Bitonic Sequence
+// Bitonic sort divide former array into groups of size 2 and order them easily in alternating directions
+// Thanks to these arrays can me merged (also in alternating directions) into sorted ones with bitonic sequence and their size becomes 2^n
+// Finally we can merge two subarrays sorted in opposite directions into one sorted using Bitonic Sequence again
+
 __host__ void bitonic_sort(int n, float *x){
     int current_size;
+    // Sorts every 2^n block in
     for (int size=1; size <= n / 2; size *= 2)
     {
+        // Bitonic Sequence is a loop
         for (current_size = size; current_size >= 1; current_size /= 2){
-            compare<<<std::ceil((float) (n / 2) / 1024.0f), 1024>>>(n, x, size, current_size);
+            // Call number of comparisons in parallel (blocks of threads rounded to next integer value)
+            bitonic_sequence_step<<<std::ceil((float) (n / 2) / 1024.0f), 1024>>>(n, x, size, current_size);
         }
     }
 }
@@ -155,23 +168,51 @@ __host__ void bitonic_sort(int n, float *x){
 
 // CPU Quick sort
 
-__host__ int partition (float* x, int low, int high)
-{
-    float pivot = x[high]; // pivot
-    int i = low; // Index of smaller element and indicates the right position of pivot found so far
+// 5 6 3 4
+// pivot = 4
+// i j          5 > 4
+//  V
+//  5  6  3  4
 
-    for (int j = low; j <= high - 1; j++)
-        // If current element is smaller than the pivot
+//  i  j        6 > 4
+//  V  V
+//  5  6  3  4
+
+//  i     j     3 < 4
+//  V     V
+//  5  6  3  4
+
+//     i     j  4 = 4
+//     V     V
+//  3  6  5  4
+// swap x[i] x[h[]
+
+//     i
+//     V
+//  3  4  5  6
+
+__host__ int partition (float* x, int l, int h)
+{
+    float pivot = x[h]; // Choose last value as the pivot
+    int i = l; // Index or current pivot
+
+    for (int j = l; j < h; j++)
+        // If x[j] is smaller than pivot value move it to the left and move pivot index to the right
+        // We are sure things smaller than pivot are on the left of it
         if (x[j] < pivot)
             swap(x[i++], x[j]);
-        
-    swap(x[i], x[high]);
+
+    // Because pivot was chosen as last element we need to move it to calculated index
+    swap(x[i], x[h]);
     return i;
 }
 
 __host__ void quick_sort(float *x, int i, int j){
     if(i < j){
+        // Divide array into two smaller ones where one has values smaller than pivot and second has values grater than pivot
         int pivot = partition(x, i, j);
+
+        // Sort divided arrays
         quick_sort(x, i, pivot - 1);
         quick_sort(x, pivot + 1, j);
     }
@@ -299,8 +340,14 @@ int main(){
     std::cout << "CPU Merge Sort time   = " << std::chrono::duration_cast<std::chrono::microseconds>(cpu_merge_end - cpu_merge_start).count() << " µs" << std::endl;
     std::cout << "CPU Quick Sort time   = " << std::chrono::duration_cast<std::chrono::microseconds>(cpu_quick_end - cpu_quick_start).count() << " µs" << std::endl;
 
+    // Deallocate CUDA memory
     cudaFree(cuda_gpu_bubble);
     cudaFree(cuda_gpu_bitonic);
 
-
+    // Deallocate memory
+    free(cpu_bubble);
+    free(cpu_merge);
+    free(cpu_quick);
+    free(gpu_bubble);
+    free(gpu_bitonic);
 }
